@@ -2,15 +2,15 @@
  * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
-package kotlinx.coroutines.experimental.io.jvm.javaio
+package kotlinx.coroutines.io.jvm.javaio
 
 import kotlinx.atomicfu.*
-import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.io.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.io.*
 import java.io.*
 import java.util.concurrent.locks.*
-import kotlin.coroutines.experimental.*
-import kotlin.coroutines.experimental.intrinsics.*
+import kotlin.coroutines.*
+import kotlin.coroutines.intrinsics.*
 
 /**
  * Create blocking [java.io.InputStream] for this channel that does block every time the channel suspends at read
@@ -128,7 +128,13 @@ private abstract class BlockingAdapter(val parent: Job? = null) {
         override val context: CoroutineContext
             get() = if (parent != null) Unconfined + parent else EmptyCoroutineContext
 
-        override fun resume(value: Unit) {
+        override fun resumeWith(result: SuccessOrFailure<Unit>) {
+            result
+                .onSuccess { resume() }
+                .onFailure { resumeWithException(it) }
+        }
+
+        private fun resume() {
             var thread: Thread? = null
             result.value = -1
             state.update { current ->
@@ -146,7 +152,7 @@ private abstract class BlockingAdapter(val parent: Job? = null) {
             disposable?.dispose()
         }
 
-        override fun resumeWithException(exception: Throwable) {
+        private fun resumeWithException(exception: Throwable) {
             var thread: Thread? = null
             var continuation: Continuation<*>? = null
 

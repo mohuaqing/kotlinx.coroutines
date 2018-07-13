@@ -2,12 +2,12 @@
  * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
-package kotlinx.coroutines.experimental.io.internal
+package kotlinx.coroutines.io.internal
 
 import kotlinx.atomicfu.*
-import kotlinx.coroutines.experimental.*
-import kotlin.coroutines.experimental.*
-import kotlin.coroutines.experimental.intrinsics.*
+import kotlinx.coroutines.*
+import kotlin.coroutines.*
+import kotlin.coroutines.intrinsics.*
 
 /**
  * Semi-cancellable reusable continuation. Unlike regular continuation this implementation has limitations:
@@ -76,38 +76,17 @@ internal class MutableDelegateContinuation<T : Any> : Continuation<T>, Dispatche
     override val context: CoroutineContext
         get() = (state.value as? Continuation<*>)?.context ?: EmptyCoroutineContext
 
-    override fun resume(value: T) {
+    override fun resumeWith(result: SuccessOrFailure<T>) {
         loop@while(true) {
             val before = state.value
 
             when (before) {
                 null -> {
-                    if (!state.compareAndSet(null, value)) continue@loop
+                    if (!state.compareAndSet(null, result.toState())) continue@loop
                     return
                 }
                 is Continuation<*> -> {
-                    if (!state.compareAndSet(before, value)) continue@loop
-                    @Suppress("UNCHECKED_CAST")
-                    val cont = before as Continuation<T>
-                    _delegate = cont
-                    return dispatch(1)
-                }
-                else -> return
-            }
-        }
-    }
-
-    override fun resumeWithException(exception: Throwable) {
-        loop@while(true) {
-            val before = state.value
-
-            when (before) {
-                null -> {
-                    if (!state.compareAndSet(null, exception)) continue@loop
-                    return
-                }
-                is Continuation<*> -> {
-                    if (!state.compareAndSet(before, CompletedExceptionally(exception))) continue@loop
+                    if (!state.compareAndSet(before, result.toState())) continue@loop
                     @Suppress("UNCHECKED_CAST")
                     val cont = before as Continuation<T>
                     _delegate = cont
