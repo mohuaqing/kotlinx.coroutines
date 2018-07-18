@@ -86,7 +86,7 @@ class CoroutineSchedulerTest : TestBase() {
 
     @Test
     fun testRngUniformDistribution() {
-        CoroutineScheduler(1).use { scheduler ->
+        CoroutineScheduler(1, 128).use { scheduler ->
             val worker = scheduler.PoolWorker(1)
             testUniformDistribution(worker, 2)
             testUniformDistribution(worker, 4)

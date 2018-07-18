@@ -1,10 +1,9 @@
 package kotlinx.coroutines.experimental.scheduling
 
+import kotlinx.coroutines.experimental.internal.*
 import java.util.concurrent.*
 
 
-internal typealias Task = TimedTask
-internal typealias GlobalQueue = TaskQueue
 // TODO most of these fields will be moved to 'object ExperimentalDispatcher'
 
 // 100us as default
@@ -42,7 +41,18 @@ internal enum class TaskMode {
     PROBABLY_BLOCKING,
 }
 
-internal data class TimedTask(val task: Runnable, val submissionTime: Long, val mode: TaskMode)
+internal data class Task(
+    val block: Runnable,
+    val submissionTime: Long,
+    val mode: TaskMode
+) : LockFreeMPMCQueueNode<Task>()
+
+// Open for tests
+internal open class GlobalQueue : LockFreeMPMCQueue<Task>() {
+    // Open for tests
+    public open fun removeFirstBlockingModeOrNull(): Task? =
+        removeFistOrNullIf { it.mode == TaskMode.PROBABLY_BLOCKING }
+}
 
 internal abstract class TimeSource {
     abstract fun nanoTime(): Long

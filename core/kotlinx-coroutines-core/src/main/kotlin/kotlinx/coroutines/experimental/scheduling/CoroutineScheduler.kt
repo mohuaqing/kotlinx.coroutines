@@ -12,30 +12,34 @@ import java.util.concurrent.locks.*
  * including both CPU-intensive and blocking tasks.
  *
  * Current scheduler implementation has two optimization targets:
- * 1) Efficiency in the face of communication patterns (e.g., actors communicating via channel)
- * 2) Dynamic resizing to support blocking calls without re-dispatching coroutine to separate "blocking" thread pool
+ * * Efficiency in the face of communication patterns (e.g., actors communicating via channel)
+ * * Dynamic resizing to support blocking calls without re-dispatching coroutine to separate "blocking" thread pool
  *
- * Structural overview
+ * ### Structural overview
+ *
  * Scheduler consists of [corePoolSize] worker threads to execute CPU-bound tasks and up to [maxPoolSize] (lazily created) threads
  * to execute blocking tasks. Every worker has local queue in addition to global scheduler queue and global queue
  * has priority over local queue to avoid starvation of externally-submitted (e.g., from Android UI thread) tasks and work-stealing is implemented
  * on top of that queues to provide even load distribution and illusion of centralized run queue.
  *
- * Scheduling
+ * ### Scheduling
+ *
  * When a coroutine is dispatched from within scheduler worker, it's placed into the head of worker run queue.
  * If the head is not empty, the task from the head is moved to the tail. Though it is unfair scheduling policy,
  * it couples communicating coroutines into one and eliminates scheduling latency that arises from placing task in the end of the queue.
  * Placing former head to the tail is necessary to provide semi-FIFO order, otherwise queue degenerates to stack.
  * When a coroutine is dispatched from an external thread, it's put into the global queue.
  *
- * Work stealing and affinity
+ * ### Work stealing and affinity
+ *
  * To provide even tasks distribution worker tries to steal tasks from other workers queues before parking when his local queue is empty.
  * A non-standard solution is implemented to provide tasks affinity: task may be stolen only if it's 'stale' enough (based on the value of [WORK_STEALING_TIME_RESOLUTION_NS]).
  * For this purpose monotonic global clock ([System.nanoTime]) is used and every task has associated with it submission time.
  * This approach shows outstanding results when coroutines are cooperative, but as downside scheduler now depends on high-resolution global clock
  * which may limit scalability on NUMA machines.
  *
- * Dynamic resizing and support of blocking tasks
+ * ### Dynamic resizing and support of blocking tasks
+ *
  * To support possibly blocking tasks [TaskMode] and CPU quota (via [cpuPermits]) are used.
  * To execute [TaskMode.NON_BLOCKING] tasks from the global queue or to steal tasks from other workers
  * the worker should have CPU permit. When a worker starts executing [TaskMode.PROBABLY_BLOCKING] task,
@@ -44,14 +48,16 @@ import java.util.concurrent.locks.*
  * all tasks from its local queue (including [TaskMode.NON_BLOCKING]) and then parks as retired without polling
  * global queue or trying to steal new tasks. Such approach may slightly limit scalability (allowing more than [corePoolSize] threads
  * to execute CPU-bound tasks at once), but in practice, it is not, significantly reducing context switches and tasks re-dispatching.
+ *
+ * @suppress **This is unstable API and it is subject to change.**
  */
 @Suppress("NOTHING_TO_INLINE")
 internal class CoroutineScheduler(
     private val corePoolSize: Int,
-    private val maxPoolSize: Int = corePoolSize * 128
+    private val maxPoolSize: Int
 ) : Closeable {
 
-    private val globalWorkQueue: LockFreeQueue = LockFreeQueue()
+    private val globalWorkQueue: GlobalQueue = GlobalQueue()
 
     /*
      * Permits to execute non-blocking (~CPU-intensive) tasks.
@@ -209,13 +215,13 @@ internal class CoroutineScheduler(
      * @param fair whether the task should be dispatched fairly (strict FIFO) or not (semi-FIFO)
      */
     fun dispatch(block: Runnable, mode: TaskMode = TaskMode.NON_BLOCKING, fair: Boolean = false) {
-        // TODO at some point make DispatchTask extend TimedTask and make its field settable to save an allocation
-        val task = TimedTask(block, schedulerTimeSource.nanoTime(), mode)
+        // TODO at some point make DispatchTask extend Task and make its field settable to save an allocation
+        val task = Task(block, schedulerTimeSource.nanoTime(), mode)
 
         when (submitToLocalQueue(task, mode, fair)) {
             ADDED -> return
             NOT_ADDED -> {
-                globalWorkQueue.add(task)
+                globalWorkQueue.addLast(task)
                 requestCpuWorker()
             }
             else -> requestCpuWorker()
@@ -429,7 +435,7 @@ internal class CoroutineScheduler(
                 "retired workers = $retired, " +
                 "finished workers = $finished, " +
                 "running workers queues = $queueSizes, "+
-                "global queue size = ${globalWorkQueue.size()}], " +
+                "global queue size = ${globalWorkQueue.size}], " +
                 "control state: ${controlState.value}"
     }
 
@@ -514,15 +520,15 @@ internal class CoroutineScheduler(
 
         override fun run() {
             while (!isTerminated.value && state != WorkerState.FINISHED) {
-                val job = findTask()
-                if (job == null) {
+                val task = findTask()
+                if (task == null) {
                     // Wait for a job with potential park
                     idle()
                 } else {
-                    idleReset(job.mode)
-                    beforeTask(job)
-                    runSafely(job.task)
-                    afterTask(job)
+                    idleReset(task.mode)
+                    beforeTask(task)
+                    runSafely(task.block)
+                    afterTask(task)
                 }
             }
 
@@ -692,7 +698,7 @@ internal class CoroutineScheduler(
          * it can go to deep park/termination and puts recently arrived task to its local queue
          */
         private fun blockingQuiescence(): Boolean {
-            globalWorkQueue.pollBlockingMode()?.let {
+            globalWorkQueue.removeFirstBlockingModeOrNull()?.let {
                 localQueue.add(it, globalWorkQueue)
                 return false
             }
@@ -728,12 +734,12 @@ internal class CoroutineScheduler(
                  */
                 val pollGlobal = nextInt(2 * corePoolSize) == 0
                 if (pollGlobal) {
-                    globalWorkQueue.poll()?.let { return it }
+                    globalWorkQueue.removeFistOrNull()?.let { return it }
                 }
 
                 localQueue.poll()?.let { return it }
                 if (!pollGlobal) {
-                    globalWorkQueue.poll()?.let { return it }
+                    globalWorkQueue.removeFistOrNull()?.let { return it }
                 }
 
                 return trySteal()
@@ -747,7 +753,7 @@ internal class CoroutineScheduler(
             * 2) It helps with rare race when external submitter sends depending blocking tasks
             *    one by one and one of the requested workers may miss CPU token
             */
-            return localQueue.poll() ?: globalWorkQueue.pollBlockingMode()
+            return localQueue.poll() ?: globalWorkQueue.removeFirstBlockingModeOrNull()
         }
 
         private fun trySteal(): Task? {
