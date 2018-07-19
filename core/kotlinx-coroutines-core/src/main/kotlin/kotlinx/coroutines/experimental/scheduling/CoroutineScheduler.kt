@@ -161,16 +161,16 @@ internal class CoroutineScheduler(
     private val isTerminated = atomic(false)
 
     companion object {
-        private const val MAX_SPINS = 1000L
-        private const val MAX_YIELDS = 500L
-
-        @JvmStatic
-        private val MAX_PARK_TIME_NS = TimeUnit.SECONDS.toNanos(1)
+        private const val MAX_SPINS = 1000
+        private const val MAX_YIELDS = MAX_SPINS + 500
+        
+        @JvmStatic // Note, that is fits into Int (it is is equal to 10^9)
+        private val MAX_PARK_TIME_NS = TimeUnit.SECONDS.toNanos(1).toInt()
 
         @JvmStatic
         private val MIN_PARK_TIME_NS = (WORK_STEALING_TIME_RESOLUTION_NS / 4)
             .coerceAtLeast(10)
-            .coerceAtMost(MAX_PARK_TIME_NS)
+            .coerceAtMost(MAX_PARK_TIME_NS.toLong()).toInt()
 
         // A symbol to mark workers that are not in parkedWorkersStack
         private val NOT_IN_STACK = Symbol("NOT_IN_STACK")
@@ -552,10 +552,11 @@ internal class CoroutineScheduler(
         private var lastExhaustionTime = 0L
 
         @Volatile // Required for concurrent idleResetBeforeUnpark
-        private var spins = 0L
-        private var yields = 0L // TODO replace with IntPair when inline classes arrive
+        private var spins = 0 // spins until MAX_SPINS, then yields until MAX_YIELDS
 
+        // Note: it is concurrently reset by idleResetBeforeUnpark
         private var parkTimeNs = MIN_PARK_TIME_NS
+        
         private var rngState = random.nextInt()
 
         override fun run() {
@@ -655,20 +656,16 @@ internal class CoroutineScheduler(
              * The main idea is not to park while it's possible (otherwise throughput on asymmetric workloads suffers due to too frequent
              * park/unpark calls and delays between job submission and thread queue checking)
              */
-            when {
-                // Volatile read spins, shall be read first
-                spins < MAX_SPINS -> ++spins
-                yields <= MAX_YIELDS -> {
-                    ++yields
-                    yield()
+            val spins = this.spins // volatile read
+            if (spins <= MAX_YIELDS) {
+                this.spins = spins + 1 // volatile write
+                if (spins >= MAX_SPINS) yield()
+            } else {
+                if (parkTimeNs < MAX_PARK_TIME_NS) {
+                    parkTimeNs = (parkTimeNs * 3 ushr 1).coerceAtMost(MAX_PARK_TIME_NS)
                 }
-                else -> {
-                    if (parkTimeNs < MAX_PARK_TIME_NS) {
-                        parkTimeNs = (parkTimeNs * 3 shr 1).coerceAtMost(MAX_PARK_TIME_NS)
-                    }
-                    tryReleaseCpu(WorkerState.PARKING)
-                    doPark(parkTimeNs)
-                }
+                tryReleaseCpu(WorkerState.PARKING)
+                doPark(parkTimeNs.toLong())
             }
         }
 
@@ -741,14 +738,12 @@ internal class CoroutineScheduler(
                 state = WorkerState.BLOCKING
                 parkTimeNs = MIN_PARK_TIME_NS
             }
-            yields = 0
             spins = 0
         }
 
         // It is invoked by other thread before this worker is unparked
         fun idleResetBeforeUnpark() {
             parkTimeNs = MIN_PARK_TIME_NS
-            yields = 0
             spins = 0 // Volatile write, should be written last
         }
 
