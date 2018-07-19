@@ -54,9 +54,14 @@ import java.util.concurrent.locks.*
  */
 @Suppress("NOTHING_TO_INLINE")
 internal class CoroutineScheduler(
+    private val schedulerName: String,
     private val corePoolSize: Int,
     private val maxPoolSize: Int
 ) : Closeable {
+    constructor(
+        corePoolSize: Int,
+        maxPoolSize: Int
+    ) : this("CoroutineScheduler", corePoolSize, maxPoolSize)
 
     private val globalQueue: GlobalQueue = GlobalQueue()
 
@@ -417,14 +422,10 @@ internal class CoroutineScheduler(
         var blockingWorkers = 0
         var cpuWorkers = 0
         var retired = 0
-        var finished = 0
-
+        var terminated = 0
         val queueSizes = arrayListOf<String>()
         for (worker in workers) {
-            if (worker == null) {
-                continue
-            }
-
+            if (worker == null) continue
             val queueSize = worker.localQueue.size()
             when (worker.state) {
                 WorkerState.PARKING -> ++parkedWorkers
@@ -440,29 +441,44 @@ internal class CoroutineScheduler(
                     ++retired
                     if (queueSize > 0) queueSizes += queueSize.toString() + "r" // Retiring
                 }
-                WorkerState.FINISHED -> ++finished
+                WorkerState.TERMINATED -> ++terminated
             }
         }
-
-        return "${super.toString()}[core pool size = $corePoolSize, " +
-                "CPU workers = $cpuWorkers, " +
-                "blocking workers = $blockingWorkers, " +
-                "parked workers = $parkedWorkers, " +
-                "retired workers = $retired, " +
-                "finished workers = $finished, " +
+        val state = controlState.value
+        return "$schedulerName@$hexAddress[" +
+                "Pool Size {" +
+                    "core = $corePoolSize, " +
+                    "max = $maxPoolSize}, " +
+                "Worker States {" +
+                    "CPU = $cpuWorkers, " +
+                    "blocking = $blockingWorkers, " +
+                    "parked = $parkedWorkers, " +
+                    "retired = $retired, " +
+                    "terminated = $terminated}, " +
                 "running workers queues = $queueSizes, "+
-                "global queue size = ${globalQueue.size}], " +
-                "control state: ${controlState.value}"
+                "global queue size = ${globalQueue.size}, " +
+                "Control State Workers {" +
+                    "created = ${createdWorkers(state)}, " +
+                    "blocking = ${blockingWorkers(state)}}" +
+                "]"
     }
 
-    // todo: make name of the pool configurable (optional parameter to CoroutineScheduler) and base thread names on it
-    internal inner class Worker(sequenceNumber: Int) : Thread("CoroutineScheduler-worker-$sequenceNumber") {
+    internal inner class Worker private constructor() : Thread() {
         init {
             isDaemon = true
         }
 
         // guarded by scheduler lock
-        private var indexInArray = sequenceNumber
+        private var indexInArray = -1
+            set(index) {
+                name = "$schedulerName-worker-${if (index < 0) "TERMINATED" else index.toString()}"
+                field = index
+            }
+
+        constructor(index: Int) : this() {
+            indexInArray = index
+        }
+
         val localQueue: WorkQueue = WorkQueue()
 
         /**
@@ -561,7 +577,7 @@ internal class CoroutineScheduler(
 
         override fun run() {
             var wasIdle = false // local variable to avoid extra idleReset invocations when tasks repeatedly arrive
-            while (!isTerminated.value && state != WorkerState.FINISHED) {
+            while (!isTerminated.value && state != WorkerState.TERMINATED) {
                 val task = findTask()
                 if (task == null) {
                     // Wait for a job with potential park
@@ -582,7 +598,7 @@ internal class CoroutineScheduler(
                 }
             }
 
-            tryReleaseCpu(WorkerState.FINISHED)
+            tryReleaseCpu(WorkerState.TERMINATED)
         }
 
         private fun runSafely(block: Runnable) {
@@ -709,12 +725,14 @@ internal class CoroutineScheduler(
                  * Now move last worker into an index in array that was previously occupied by this worker.
                  */
                 val lastWorkerIndex = decrementCreatedWorkers()
-                val worker = workers[lastWorkerIndex]!!
-                workers[indexInArray] = worker
-                worker.indexInArray = indexInArray
+                val lastWorker = workers[lastWorkerIndex]!!
+                workers[indexInArray] = lastWorker
+                lastWorker.indexInArray = indexInArray
                 workers[lastWorkerIndex] = null
+                // Cleanup index of this worker for debugging purposes
+                indexInArray = -1
             }
-            state = WorkerState.FINISHED
+            state = WorkerState.TERMINATED
         }
 
         /**
@@ -811,6 +829,6 @@ internal class CoroutineScheduler(
         /**
          * Terminal state, will no longer be used
          */
-        FINISHED
+        TERMINATED
     }
 }
