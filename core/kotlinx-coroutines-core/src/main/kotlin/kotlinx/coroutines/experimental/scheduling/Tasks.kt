@@ -20,12 +20,12 @@ internal val BLOCKING_DEFAULT_PARALLELISM = readFromSystemProperties(
         "kotlinx.coroutines.scheduler.blocking.parallelism", 16)
 
 @JvmField
-internal val CORE_POOL_SIZE = readFromSystemProperties(
-    "kotlinx.coroutines.scheduler.core.pool.size", Runtime.getRuntime().availableProcessors().coerceAtLeast(2))
+internal val CORE_POOL_SIZE = readFromSystemProperties("kotlinx.coroutines.scheduler.core.pool.size",
+    Runtime.getRuntime().availableProcessors().coerceAtLeast(2))
 
 @JvmField
-internal val MAX_POOL_SIZE = readFromSystemProperties(
-    "kotlinx.coroutines.scheduler.max.pool.size", Runtime.getRuntime().availableProcessors() * 128)
+internal val MAX_POOL_SIZE = readFromSystemProperties("kotlinx.coroutines.scheduler.max.pool.size",
+    (Runtime.getRuntime().availableProcessors() * 128).coerceIn(CORE_POOL_SIZE, CoroutineScheduler.MAX_SUPPORTED_POOL_SIZE))
 
 @JvmField
 internal val IDLE_WORKER_KEEP_ALIVE_NS = TimeUnit.SECONDS.toNanos(readFromSystemProperties(
