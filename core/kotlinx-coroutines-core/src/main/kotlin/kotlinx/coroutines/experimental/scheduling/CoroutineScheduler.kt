@@ -441,6 +441,8 @@ internal class CoroutineScheduler(
      */
     private fun submitToLocalQueue(task: Task, mode: TaskMode, fair: Boolean): Int {
         val worker = Thread.currentThread() as? Worker ?: return NOT_ADDED
+        if (worker.scheduler !== this) return NOT_ADDED // different scheduler's worker (!!!)
+
         var result = ADDED
 
         if (mode == TaskMode.NON_BLOCKING) {
@@ -556,6 +558,8 @@ internal class CoroutineScheduler(
         constructor(index: Int) : this() {
             indexInArray = index
         }
+
+        val scheduler get() = this@CoroutineScheduler
 
         val localQueue: WorkQueue = WorkQueue()
 
@@ -800,7 +804,7 @@ internal class CoroutineScheduler(
                 /*
                  * At this point this thread is no longer considered as usable for scheduling.
                  * We need multi-step choreography to reindex workers.
-                 * 
+                 *
                  * 1) Read current worker's index and reset it to zero.
                  */
                 val oldIndex = indexInArray
@@ -808,7 +812,7 @@ internal class CoroutineScheduler(
                 /*
                  * Now this worker cannot become the top of parkedWorkersStack, but it can
                  * still be at the stack top via oldIndex.
-                 * 
+                 *
                  * 2) Update top of stack if it was pointing to oldIndex and make sure no
                  *    pending push/pop operation that might have already retrieved oldIndex could complete.
                  */
