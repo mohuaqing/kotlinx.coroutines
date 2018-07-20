@@ -11,10 +11,20 @@ import kotlin.coroutines.experimental.*
  */
 // TODO make internal after integration wih Ktor
 class ExperimentalCoroutineDispatcher(
-    corePoolSize: Int = CORE_POOL_SIZE,
-    maxPoolSize: Int = MAX_POOL_SIZE
+    corePoolSize: Int,
+    maxPoolSize: Int,
+    idleWorkerKeepAliveNs: Long
 ) : CoroutineDispatcher(), Delay, Closeable {
-    private val coroutineScheduler = CoroutineScheduler(corePoolSize, maxPoolSize)
+    constructor(
+        corePoolSize: Int = CORE_POOL_SIZE,
+        maxPoolSize: Int = MAX_POOL_SIZE
+    ) : this(
+        corePoolSize,
+        maxPoolSize,
+        IDLE_WORKER_KEEP_ALIVE_NS
+    )
+
+    private val coroutineScheduler = CoroutineScheduler(corePoolSize, maxPoolSize, idleWorkerKeepAliveNs)
 
     override fun dispatch(context: CoroutineContext, block: Runnable): Unit = coroutineScheduler.dispatch(block)
 

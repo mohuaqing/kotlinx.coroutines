@@ -2,7 +2,6 @@ package kotlinx.coroutines.experimental.scheduling
 
 import kotlinx.atomicfu.*
 import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.channels.*
 import kotlinx.coroutines.experimental.internal.*
 import java.io.Closeable
 import java.util.*
@@ -55,15 +54,11 @@ import java.util.concurrent.locks.*
  */
 @Suppress("NOTHING_TO_INLINE")
 internal class CoroutineScheduler(
-    private val schedulerName: String,
     private val corePoolSize: Int,
-    private val maxPoolSize: Int
+    private val maxPoolSize: Int,
+    private val idleWorkerKeepAliveNs: Long = IDLE_WORKER_KEEP_ALIVE_NS,
+    private val schedulerName: String = DEFAULT_SCHEDULER_NAME
 ) : Closeable {
-    constructor(
-        corePoolSize: Int,
-        maxPoolSize: Int
-    ) : this("CoroutineScheduler", corePoolSize, maxPoolSize)
-
     init {
         require(corePoolSize >= MIN_SUPPORTED_POOL_SIZE) {
             "Core pool size $corePoolSize should be at least $MIN_SUPPORTED_POOL_SIZE"
@@ -73,6 +68,9 @@ internal class CoroutineScheduler(
         }
         require(maxPoolSize <= MAX_SUPPORTED_POOL_SIZE) {
             "Max pool size $maxPoolSize should not exceed maximal supported number of threads $MAX_SUPPORTED_POOL_SIZE"
+        }
+        require(idleWorkerKeepAliveNs > 0) {
+            "Idle worker keep alive time $idleWorkerKeepAliveNs must be postiive"
         }
     }
 
@@ -769,9 +767,9 @@ internal class CoroutineScheduler(
             if (!blockingQuiescence()) return
             terminationState.value = ALLOWED
             // set termination deadline the first time we are here (it is reset in idleReset)
-            if (terminationDeadline == 0L) terminationDeadline = System.nanoTime() + IDLE_WORKER_KEEP_ALIVE_NS
+            if (terminationDeadline == 0L) terminationDeadline = System.nanoTime() + idleWorkerKeepAliveNs
             // actually park
-            doPark(IDLE_WORKER_KEEP_ALIVE_NS)
+            doPark(idleWorkerKeepAliveNs)
             // try terminate when we are idle past termination deadline
             // note, that comparison is written like this to protect against potential nanoTime wraparound
             if (System.nanoTime() - terminationDeadline >= 0) {

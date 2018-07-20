@@ -7,6 +7,8 @@ import java.util.concurrent.*
 
 // TODO most of these fields will be moved to 'object ExperimentalDispatcher'
 
+internal const val DEFAULT_SCHEDULER_NAME = "CoroutineScheduler"
+
 // 100us as default
 @JvmField
 internal val WORK_STEALING_TIME_RESOLUTION_NS = systemProp(
