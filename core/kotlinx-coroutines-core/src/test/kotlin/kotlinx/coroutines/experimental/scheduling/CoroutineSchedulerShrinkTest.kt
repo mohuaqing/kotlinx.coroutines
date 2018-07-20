@@ -32,7 +32,7 @@ class CoroutineSchedulerShrinkTest : SchedulerTestBase() {
 
         delay(2, TimeUnit.SECONDS)
         // Pool should shrink to core size +- eps
-        checkPoolThreadsExist(CORES_COUNT..CORES_COUNT + 2)
+        checkPoolThreadsExist(CORES_COUNT..CORES_COUNT + 3)
     }
 
     @Test(timeout = 10_000)
@@ -58,7 +58,7 @@ class CoroutineSchedulerShrinkTest : SchedulerTestBase() {
 
         delay(2, TimeUnit.SECONDS)
         // Pool should shrink to core size
-        checkPoolThreadsExist(CORES_COUNT..CORES_COUNT + 2)
+        checkPoolThreadsExist(CORES_COUNT..CORES_COUNT + 3)
     }
 
     private suspend fun checkBlockingTasks(blockingTasks: List<Deferred<*>>) {
@@ -96,7 +96,7 @@ class CoroutineSchedulerShrinkTest : SchedulerTestBase() {
 
         delay(2, TimeUnit.SECONDS)
         // Pool should shrink almost to core size (+/- eps)
-        checkPoolThreadsExist(CORES_COUNT..CORES_COUNT + 2)
+        checkPoolThreadsExist(CORES_COUNT..CORES_COUNT + 3)
 
         busySpinTasks.forEach {
             require(it.isActive)
