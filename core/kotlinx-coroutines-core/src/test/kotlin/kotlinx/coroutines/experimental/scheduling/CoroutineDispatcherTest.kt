@@ -92,7 +92,7 @@ class CoroutineDispatcherTest : SchedulerTestBase() {
             assertEquals(thread, Thread.currentThread())
         }
 
-        checkPoolThreadsCreated(1..2)
+        checkPoolThreadsCreated(initialPoolSize()..initialPoolSize() + 1)
     }
 
     @Test

@@ -24,7 +24,7 @@ class CoroutineSchedulerShrinkTest : SchedulerTestBase() {
         // Init dispatcher
         async(dispatcher) { }.await()
         // Pool is initialized with core size in the beginning
-        checkPoolThreadsExist(1..2)
+        checkPoolThreadsExist(initialPoolSize()..initialPoolSize() + 1)
 
         // Run blocking tasks and check increased threads count
         val blockingTasks = launchBlocking()
